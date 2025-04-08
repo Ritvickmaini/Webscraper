@@ -10,8 +10,8 @@ import time
 st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
 
 # ✅ PING ROUTE FOR UPTIMEROBOT
-query_params = st.query_params
-if query_params.get("ping") == ["true"]:
+params = st.query_params
+if "ping" in params:
     st.write("✅ App is alive!")
     st.stop()
 
