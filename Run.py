@@ -6,13 +6,21 @@ import re
 from concurrent.futures import ThreadPoolExecutor
 import time
 
+# ✅ MUST BE FIRST
+st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
+
+# ✅ PING ROUTE FOR UPTIMEROBOT
+query_params = st.query_params
+if query_params.get("ping") == ["true"]:
+    st.write("✅ App is alive!")
+    st.stop()
+
 # Regex patterns
 EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
 
 # Streamlit UI
-st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
 st.markdown("""
     <style>
         body { background-color: #0f1117; color: #f0f2f6; }
