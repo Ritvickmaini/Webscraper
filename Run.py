@@ -94,20 +94,14 @@ def extract_contacts(url):
                 phone_numbers.update(cleaned)
 
         return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
-    except:
+    except Exception as e:
         return "Error", "Error"
 
 if uploaded_file:
     try:
-        df = pd.read_csv(uploaded_file)
-    except UnicodeDecodeError:
-        try:
-            df = pd.read_csv(uploaded_file, encoding='latin1')
-        except Exception as e:
-            st.error(f"❌ Error reading CSV with fallback encoding: {e}")
-            st.stop()
+        df = pd.read_csv(uploaded_file, encoding='utf-8', errors='replace')
     except Exception as e:
-        st.error(f"❌ Error reading CSV: {e}")
+        st.error(f"❌ Failed to read CSV: {e}")
         st.stop()
 
     # Auto-detect URL column
@@ -139,8 +133,13 @@ if uploaded_file:
         </div>
         """, unsafe_allow_html=True)
         time.sleep(0.5)
-        with ThreadPoolExecutor(max_workers=20) as executor:
-            results = list(executor.map(extract_contacts, urls))
+
+        try:
+            with ThreadPoolExecutor(max_workers=20) as executor:
+                results = list(executor.map(extract_contacts, urls))
+        except Exception as e:
+            st.error(f"❌ Error during scraping: {e}")
+            st.stop()
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
