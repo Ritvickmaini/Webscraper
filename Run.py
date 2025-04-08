@@ -100,6 +100,12 @@ def extract_contacts(url):
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
+    except UnicodeDecodeError:
+        try:
+            df = pd.read_csv(uploaded_file, encoding='latin1')
+        except Exception as e:
+            st.error(f"❌ Error reading CSV with fallback encoding: {e}")
+            st.stop()
     except Exception as e:
         st.error(f"❌ Error reading CSV: {e}")
         st.stop()
