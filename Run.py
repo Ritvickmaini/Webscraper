@@ -1,10 +1,10 @@
 import streamlit as st
- import pandas as pd
- import requests
- from bs4 import BeautifulSoup
- import re
- from concurrent.futures import ThreadPoolExecutor
- import time
+import pandas as pd
+import requests
+from bs4 import BeautifulSoup
+import re
+from concurrent.futures import ThreadPoolExecutor
+import time
  
  # Regex patterns
  EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
