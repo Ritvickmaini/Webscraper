@@ -138,7 +138,7 @@ if uploaded_file:
         </div>
         """, unsafe_allow_html=True)
         time.sleep(0.5)
-        with ThreadPoolExecutor(max_workers=20) as executor:
+        with ThreadPoolExecutor(max_workers=50) as executor:
             results = list(executor.map(extract_contacts, urls))
 
     df['Emails'] = [res[0] for res in results]
