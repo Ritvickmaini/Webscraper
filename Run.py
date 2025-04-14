@@ -162,25 +162,41 @@ if uploaded_file:
 
     st.success("🎉 Scraping Completed")
 
-    st.subheader("📊 Final Preview (Only Leads with Contacts)")
-    st.dataframe(filtered_df)
+# 📄 Preview: Full Results
+st.subheader("📄 Full Results (All Rows)")
+st.dataframe(df)
 
-    st.markdown("### 🔍 Scraping Summary")
-    st.markdown(f"""
-        - 🏢 **Total Domains Processed:** `{total}`  
-        - 📬 **Emails Found:** `{emails_found}`  
-        - 📞 **UK Phone Numbers Found:** `{phones_found}`  
-        - ⚠️ **Errors:** `{errors}`  
-    """)
+# 📊 Preview: Filtered (Only Leads with Contacts)
+st.subheader("📊 Filtered Results (With Emails or UK Phone Numbers)")
+st.dataframe(filtered_df)
 
-    def convert_df_to_csv(df_to_convert):
-        return df_to_convert.to_csv(index=False).encode('utf-8')
+# 🔍 Summary
+st.markdown("### 📈 Scraping Summary")
+st.markdown(f"""
+- 🏢 **Total Domains Processed:** `{total}`  
+- 📬 **Emails Found:** `{emails_found}`  
+- 📞 **UK Phone Numbers Found:** `{phones_found}`  
+- ⚠️ **Errors:** `{errors}`  
+""")
 
-    csv_output = convert_df_to_csv(filtered_df)
+# 🚀 Helper to convert DataFrame to CSV
+def convert_df_to_csv(df_to_convert):
+    return df_to_convert.to_csv(index=False).encode('utf-8')
 
-    st.download_button(
-        label="📥 Download Updated/Cleaned CSV",
-        data=csv_output,
-        file_name='scraped_contacts_filtered.csv',
-        mime='text/csv'
-    )
+csv_filtered = convert_df_to_csv(filtered_df)
+csv_full = convert_df_to_csv(df)
+
+# 📥 Download Buttons
+st.download_button(
+    label="📥 Download Filtered CSV (Only Leads with Contacts)",
+    data=csv_filtered,
+    file_name='scraped_contacts_filtered.csv',
+    mime='text/csv'
+)
+
+st.download_button(
+    label="📄 Download Full CSV (All Results)",
+    data=csv_full,
+    file_name='scraped_contacts_full.csv',
+    mime='text/csv'
+)
