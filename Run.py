@@ -97,6 +97,32 @@ def extract_contacts(url):
     except:
         return "Error", "Error"
 
+def check_website_status_fast(url):
+    if not isinstance(url, str):
+        return "🔴 Inactive"
+    try:
+        if not url.startswith("http"):
+            url = "http://" + url
+        response = requests.head(url, timeout=5, allow_redirects=True)
+        if response.status_code in [200, 301, 302]:
+            return "🟢 Active"
+        else:
+            return "🔴 Inactive"
+    except:
+        return "🔴 Inactive"
+
+def recheck_inactive_site(url):
+    try:
+        if not url.startswith("http"):
+            url = "http://" + url
+        response = requests.get(url, timeout=8)
+        if response.status_code in [200, 301, 302]:
+            return "🟢 Active"
+        else:
+            return "🔴 Inactive"
+    except:
+        return "🔴 Inactive"
+
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
@@ -104,7 +130,6 @@ if uploaded_file:
         st.error(f"❌ Error reading CSV: {e}")
         st.stop()
 
-    # ✅ Auto-detect URL column (exclude social links)
     SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
     url_col = None
     for col in df.columns:
@@ -121,13 +146,30 @@ if uploaded_file:
         st.stop()
 
     st.success(f"✅ Detected URL column: `{url_col}`")
-
     st.subheader("📄 Uploaded File Preview")
     st.dataframe(df)
 
+    urls = df[url_col].astype(str)
+
+    # Step 1: Website status check
+    with st.spinner("🔍 Checking which websites are active before scraping..."):
+        with ThreadPoolExecutor(max_workers=100) as executor:
+            status_list = list(executor.map(check_website_status_fast, urls))
+
+        inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
+        re_urls = urls.iloc[inactive_indices].tolist()
+
+        with ThreadPoolExecutor(max_workers=25) as executor:
+            rechecked = list(executor.map(recheck_inactive_site, re_urls))
+
+        for idx, new_status in zip(inactive_indices, rechecked):
+            status_list[idx] = new_status
+
+        df["Website Status"] = status_list
+        df = df[df["Website Status"] == "🟢 Active"]
+
     df['Emails'] = ''
     df['Phone Numbers'] = ''
-
     urls = df[url_col].tolist()
 
     with st.spinner("⚙️ Scraping in progress..."):
@@ -144,7 +186,6 @@ if uploaded_file:
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
 
-    # Reorder columns
     cols = df.columns.tolist()
     if url_col in cols:
         cols.remove('Emails')
@@ -153,13 +194,11 @@ if uploaded_file:
         cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
     df = df[cols]
 
-    # Filter rows with at least one contact
     filtered_df = df[
         ((df['Emails'].str.strip() != "") & (df['Emails'].str.strip() != "Error")) |
         ((df['Phone Numbers'].str.strip() != "") & (df['Phone Numbers'].str.strip() != "Error"))
     ]
 
-    # Summary
     total = len(df)
     emails_found = sum(1 for e in df['Emails'] if e.strip() not in ["", "Error"])
     phones_found = sum(1 for p in df['Phone Numbers'] if p.strip() not in ["", "Error"])
@@ -167,31 +206,26 @@ if uploaded_file:
 
     st.success("🎉 Scraping Completed")
 
-    # 📄 Preview: Full Results
     st.subheader("📄 Full Results (All Rows)")
     st.dataframe(df)
 
-    # 📊 Preview: Filtered (Only Leads with Contacts)
     st.subheader("📊 Filtered Results (With Emails or UK Phone Numbers)")
     st.dataframe(filtered_df)
 
-    # 🔍 Summary
     st.markdown("### 📈 Scraping Summary")
     st.markdown(f"""
-    - 🏢 **Total Domains Processed:** `{total}`  
+    - 🏢 **Total Active Domains Processed:** `{total}`  
     - 📬 **Emails Found:** `{emails_found}`  
     - 📞 **UK Phone Numbers Found:** `{phones_found}`  
     - ⚠️ **Errors:** `{errors}`  
     """)
 
-    # 🚀 Helper to convert DataFrame to CSV
     def convert_df_to_csv(df_to_convert):
         return df_to_convert.to_csv(index=False).encode('utf-8')
 
     csv_filtered = convert_df_to_csv(filtered_df)
     csv_full = convert_df_to_csv(df)
 
-    # 📥 Download Buttons
     st.download_button(
         label="📥 Download Filtered CSV (Only Leads with Contacts)",
         data=csv_filtered,
