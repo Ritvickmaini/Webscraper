@@ -104,10 +104,15 @@ if uploaded_file:
         st.error(f"❌ Error reading CSV: {e}")
         st.stop()
 
-    # Auto-detect URL column
+    # ✅ Auto-detect URL column (exclude social links)
+    SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
     url_col = None
     for col in df.columns:
-        if 'domain' in col.lower() or 'website' in col.lower() or 'url' in col.lower():
+        col_lower = col.lower()
+        if (
+            any(kw in col_lower for kw in ['domain', 'website', 'url']) and
+            not any(social in col_lower for social in SOCIAL_KEYWORDS)
+        ):
             url_col = col
             break
 
