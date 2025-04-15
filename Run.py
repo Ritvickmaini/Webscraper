@@ -3,255 +3,147 @@ import pandas as pd
 import requests
 from bs4 import BeautifulSoup
 import re
+import validators
 from concurrent.futures import ThreadPoolExecutor
-import time
+from urllib.parse import urljoin
 
-# ✅ MUST BE FIRST
-st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
+# App config
+st.set_page_config(page_title="B2B Contact Scraper", layout="wide")
 
-# ✅ PING ROUTE FOR UPTIMEROBOT
-query_params = st.query_params
-if query_params.get("ping") == ["true"]:
-    st.write("✅ App is alive!")
-    st.stop()
-
-# Regex patterns
-EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
-PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
-SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
-
-# Streamlit UI styling
+# Styles
 st.markdown("""
-    <style>
-        body { background-color: #0f1117; color: #f0f2f6; }
-        .main { background-color: #0f1117; }
-        .stApp { max-width: 1400px; margin: 0 auto; padding: 2rem; }
-        h1, h2, h3, .stMarkdown { color: #00ffe0; }
-        .css-1d391kg, .css-18e3th9 {
-            background-color: #1c1f26 !important;
-            border-radius: 10px !important;
-            border: 1px solid #2e2e2e !important;
-        }
-        .stButton>button {
-            background-color: #00ffe0;
-            color: black;
-            border-radius: 8px;
-            font-weight: bold;
-        }
-        .loading-container {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-        }
-        .loader {
-            border: 6px solid #f3f3f3;
-            border-top: 6px solid #00ffe0;
-            border-radius: 50%;
-            width: 50px;
-            height: 50px;
-            animation: spin 1s linear infinite;
-            margin-bottom: 10px;
-        }
-        @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
-        }
-    </style>
+<style>
+    .main {background-color: #0e1117;}
+    h1, h2, h3, h4, h5, h6, .stText, .stMarkdown {
+        color: #00ffe0 !important;
+    }
+    .css-1v3fvcr {color: #00ffe0 !important;}
+</style>
 """, unsafe_allow_html=True)
 
-st.markdown("<h1 style='text-align: center;'>🧠 Smart Contact Scraper</h1>", unsafe_allow_html=True)
-st.markdown("Upload a CSV with company domains — this app scrapes **email addresses** and **UK phone numbers** from websites.")
+# Title
+st.title("📬 B2B Contact Scraper")
+st.write("Upload a CSV with a `company_domain` column. This tool will check which websites are active, then extract emails and UK phone numbers from active ones.")
 
-uploaded_file = st.file_uploader("📤 Upload your CSV", type=['csv'])
+# Upload CSV
+uploaded_file = st.file_uploader("📁 Upload CSV", type=["csv"])
 
-# Helper functions
-def is_social_url(url):
-    return any(social in url for social in SOCIAL_DOMAINS)
-
-def is_uk_phone_number(number):
-    number = re.sub(r'\D', '', number)
-    if number.startswith('44'):
-        number = '0' + number[2:]
-    if number.startswith('0'):
-        if number.startswith('01') or number.startswith('02'):
-            return len(number) == 11
-        elif number.startswith('07'):
-            return len(number) == 11
-    return False
-
-def is_valid_phone(number):
-    digits_only = re.sub(r'\D', '', number)
-    if len(digits_only) < 8:
-        return False
-    if re.match(r'\d{4}[-/]\d{1,2}[-/]\d{1,2}', number):
-        return False
-    if re.match(r'\d{1,2}[-/]\d{1,2}[-/]\d{2,4}', number):
-        return False
-    return is_uk_phone_number(number)
-
-def extract_contacts(url):
-    if not isinstance(url, str) or is_social_url(url):
-        return "", ""
-    if not url.startswith("http"):
-        url = "http://" + url
-    try:
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        visible_text = " ".join(soup.stripped_strings)
-        emails = re.findall(EMAIL_REGEX, visible_text)
-
-        phone_numbers = set()
-        for tag in ['header', 'footer']:
-            section = soup.find(tag)
-            if section:
-                section_text = section.get_text(separator=" ", strip=True)
-                raw_numbers = re.findall(PHONE_REGEX, section_text)
-                cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
-                phone_numbers.update(cleaned)
-
-        return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
-    except:
-        return "Error", "Error"
-
-def check_website_status_fast(url):
-    if not isinstance(url, str):
-        return "🔴 Inactive"
-    try:
-        if not url.startswith("http"):
-            url = "http://" + url
-        response = requests.head(url, timeout=5, allow_redirects=True)
-        if response.status_code in [200, 301, 302]:
-            return "🟢 Active"
-        else:
-            return "🔴 Inactive"
-    except:
-        return "🔴 Inactive"
-
-def recheck_inactive_site(url):
-    try:
-        if not url.startswith("http"):
-            url = "http://" + url
-        response = requests.get(url, timeout=8)
-        if response.status_code in [200, 301, 302]:
-            return "🟢 Active"
-        else:
-            return "🔴 Inactive"
-    except:
-        return "🔴 Inactive"
-
-# Main app logic
 if uploaded_file:
-    try:
-        df = pd.read_csv(uploaded_file)
-    except Exception as e:
-        st.error(f"❌ Error reading CSV: {e}")
-        st.stop()
+    df = pd.read_csv(uploaded_file)
 
-    SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
-    url_col = None
+    # Detect domain column
+    domain_col = None
     for col in df.columns:
-        col_lower = col.lower()
-        if (
-            any(kw in col_lower for kw in ['domain', 'website', 'url']) and
-            not any(social in col_lower for social in SOCIAL_KEYWORDS)
-        ):
-            url_col = col
+        if "domain" in col.lower():
+            domain_col = col
             break
 
-    if not url_col:
-        st.error("❌ Couldn't detect a valid URL column (e.g., 'company_domain', 'website', or 'url').")
-        st.stop()
+    if domain_col is None:
+        st.error("❌ Could not detect a domain column. Please make sure your CSV contains a column with company domains (e.g., 'company_domain').")
+    else:
+        st.success(f"✅ Detected domain column: `{domain_col}`")
 
-    st.success(f"✅ Detected URL column: `{url_col}`")
-    st.subheader("📄 Uploaded File Preview")
-    st.dataframe(df)
+        # Display preview
+        st.subheader("🔍 Preview of Uploaded Data")
+        st.dataframe(df.head(10))
 
-    urls = df[url_col].astype(str)
+        # Function to check if website is active
+        def is_website_active(url):
+            try:
+                if not url.startswith("http"):
+                    url = "http://" + url
+                response = requests.head(url, timeout=5)
+                return response.status_code < 400
+            except:
+                return False
 
-    status_bar = st.progress(0)
-    with st.spinner("🔍 Checking which websites are active before scraping..."):
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            status_list = []
-            for i, status in enumerate(executor.map(check_website_status_fast, urls)):
-                status_list.append(status)
-                status_bar.progress((i + 1) / len(urls))
-        df["Website Status"] = status_list
+        # Filter out social media and invalid domains
+        def is_valid_domain(domain):
+            if not isinstance(domain, str):
+                return False
+            if not validators.domain(domain):
+                return False
+            social_keywords = ['facebook', 'linkedin', 'instagram', 'twitter', 'youtube']
+            return not any(s in domain.lower() for s in social_keywords)
 
-    inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
-    re_urls = urls.iloc[inactive_indices].tolist()
+        # Check website statuses
+        st.subheader("🌐 Checking Website Statuses")
+        active_status = []
+        status_bar = st.progress(0)
 
-    recheck_bar = st.progress(0)
-    with st.spinner("🔄 Rechecking inactive websites..."):
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            rechecked = []
-            for i, new_status in enumerate(executor.map(recheck_inactive_site, re_urls)):
-                rechecked.append(new_status)
-                recheck_bar.progress((i + 1) / len(re_urls))
-        for idx, new_status in zip(inactive_indices, rechecked):
-            status_list[idx] = new_status
+        valid_domains = [d for d in df[domain_col] if is_valid_domain(d)]
 
-        df["Website Status"] = status_list
-        df = df[df["Website Status"] == "🟢 Active"]
+        for i, domain in enumerate(df[domain_col]):
+            if not is_valid_domain(domain):
+                active_status.append("Invalid or Social")
+                continue
 
-    df['Emails'] = ''
-    df['Phone Numbers'] = ''
-    urls = df[url_col].tolist()
+            if is_website_active(domain):
+                active_status.append("Active")
+            else:
+                active_status.append("Inactive")
+            status_bar.progress((i + 1) / len(df[domain_col]))
 
-    scraping_bar = st.progress(0)
-    with st.spinner("⚙️ Scraping in progress..."):
-        st.markdown("""
-        <div class="loading-container">
-            <div class="loader"></div>
-            <div style="color: #00ffe0; font-weight: bold;">Scraping websites, please wait...</div>
-        </div>
-        """, unsafe_allow_html=True)
-        time.sleep(0.5)
-        with ThreadPoolExecutor(max_workers=50) as executor:
+        df["Website Status"] = active_status
+
+        # Filter for active websites only
+        active_df = df[df["Website Status"] == "Active"].copy()
+
+        st.subheader("📊 Summary")
+        st.write(f"Total entries: {len(df)}")
+        st.write(f"✅ Active websites: {len(active_df)}")
+        st.write(f"❌ Inactive or invalid/social: {len(df) - len(active_df)}")
+
+        # Scraping function
+        def extract_contacts(domain):
+            emails = set()
+            phones = set()
+            if not domain.startswith("http"):
+                domain = "http://" + domain
+            try:
+                response = requests.get(domain, timeout=8)
+                soup = BeautifulSoup(response.text, "html.parser")
+                text = soup.get_text()
+                # Extract emails
+                found_emails = re.findall(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", text)
+                for email in found_emails:
+                    if not any(social in email for social in ['facebook', 'linkedin', 'instagram', 'youtube']):
+                        emails.add(email)
+                # Extract UK phone numbers
+                found_phones = re.findall(r"(?:(?:\+44\s?7\d{3}|\(?07\d{3}\)?)\s?\d{3}\s?\d{3})", text)
+                phones.update(found_phones)
+            except:
+                pass
+            return {"Emails": ", ".join(emails), "Phones": ", ".join(phones)}
+
+        if st.button("🚀 Start Scraping Contacts from Active Websites"):
+            st.subheader("🔄 Scraping Contacts...")
+            scraping_bar = st.progress(0)
+
+            urls = active_df[domain_col].tolist()
             results = []
-            for i, result in enumerate(executor.map(extract_contacts, urls)):
-                results.append(result)
-                scraping_bar.progress((i + 1) / len(urls))
 
-    df['Emails'] = [res[0] for res in results]
-    df['Phone Numbers'] = [res[1] for res in results]
+            with st.spinner("⚙️ Scraping in progress..."):
+                with ThreadPoolExecutor(max_workers=50) as executor:
+                    for i, result in enumerate(executor.map(extract_contacts, urls)):
+                        results.append(result)
+                        scraping_bar.progress((i + 1) / len(urls))
 
-    cols = df.columns.tolist()
-    if url_col in cols:
-        cols.remove('Emails')
-        cols.remove('Phone Numbers')
-        insert_pos = cols.index(url_col) + 1
-        cols.insert(insert_pos, 'Phone Numbers')
-        cols.insert(insert_pos, 'Emails')
-    df = df[cols]
+            emails = [res["Emails"] for res in results]
+            phones = [res["Phones"] for res in results]
+            active_df["Emails"] = emails
+            active_df["Phone Numbers"] = phones
 
-    filtered_df = df[
-        ((df['Emails'].str.strip() != "") & (df['Emails'].str.strip() != "Error")) |
-        ((df['Phone Numbers'].str.strip() != "") & (df['Phone Numbers'].str.strip() != "Error"))
-    ]
+            # Show filtered result
+            st.subheader("📥 Filtered Results (Active Websites Only)")
+            st.dataframe(active_df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
 
-    total = len(df)
-    emails_found = sum(1 for e in df['Emails'] if e.strip() not in ["", "Error"])
-    phones_found = sum(1 for p in df['Phone Numbers'] if p.strip() not in ["", "Error"])
-    errors = sum(1 for e, p in zip(df['Emails'], df['Phone Numbers']) if e == "Error" or p == "Error")
+            # Merge with full df
+            final_df = df.merge(active_df[[domain_col, "Emails", "Phone Numbers"]], on=domain_col, how="left")
 
-    st.success("🎉 Scraping Completed")
+            st.subheader("📄 Final Results (Full CSV with Added Data)")
+            st.dataframe(final_df.head(20))
 
-    st.subheader("📄 Full Results (All Rows)")
-    st.dataframe(df)
-
-    st.subheader("📊 Filtered Results (With Emails or UK Phone Numbers)")
-    st.dataframe(filtered_df)
-
-    st.markdown("### 📈 Scraping Summary")
-    st.markdown(f"""
-    - 🏢 **Total Active Domains Processed:** `{total}`  
-    - 📬 **Emails Found:** `{emails_found}`  
-    - 📞 **UK Phone Numbers Found:** `{phones_found}`  
-    - ⚠️ **Errors:** `{errors}`  
-    """)
-
-    def convert_df_to_csv(df_to_convert):
-        return df_to_convert.to_csv(index=False).encode('utf-8')
-
-    st.download_button("📥 Download Filtered CSV (Only Leads with Contacts)", convert_df_to_csv(filtered_df), file_name='scraped_contacts_filtered.csv', mime='text/csv')
-    st.download_button("📄 Download Full CSV (All Results)", convert_df_to_csv(df), file_name='scraped_contacts_full.csv', mime='text/csv')
+            # Downloads
+            st.download_button("⬇️ Download Filtered Results", active_df.to_csv(index=False), file_name="filtered_results.csv")
+            st.download_button("⬇️ Download Full Results", final_df.to_csv(index=False), file_name="full_results.csv")
