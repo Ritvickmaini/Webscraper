@@ -10,18 +10,6 @@ from concurrent.futures import ThreadPoolExecutor
 # ✅ CONFIG
 st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
 
-# ✅ UptimeRobot Ping Route
-query_params = st.query_params
-if query_params.get("ping") == ["true"]:
-    st.write("✅ App is alive!")
-    st.stop()
-
-# ✅ Constants
-EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zAZ0-9.-]+\.[a-zAZ0-9]{2,}'
-PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
-SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
-SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
-
 # ✅ Styling
 st.markdown("""
     <style>
@@ -51,7 +39,7 @@ uploaded_file = st.file_uploader("📤 Upload your CSV", type=['csv'])
 
 # ✅ Helper functions
 def is_social_url(url):
-    return any(social in url for social in SOCIAL_DOMAINS)
+    return any(social in url for social in ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com'])
 
 def is_uk_phone_number(number):
     number = re.sub(r'\D', '', number)
@@ -80,17 +68,17 @@ async def extract_contacts(url, session):
         url = "http://" + url
 
     try:
-        async with session.get(url, timeout=10) as response:
+        async with session.get(url, timeout=5) as response:
             soup = BeautifulSoup(await response.text(), 'html.parser')
             visible_text = " ".join(soup.stripped_strings)
-            emails = re.findall(EMAIL_REGEX, visible_text)
+            emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}', visible_text)
 
             phone_numbers = set()
             for tag in ['header', 'footer']:
                 section = soup.find(tag)
                 if section:
                     section_text = section.get_text(separator=" ", strip=True)
-                    raw_numbers = re.findall(PHONE_REGEX, section_text)
+                    raw_numbers = re.findall(r'(\+?\d[\d\s\-\(\)]{7,}\d)', section_text)
                     cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
                     phone_numbers.update(cleaned)
 
@@ -98,51 +86,13 @@ async def extract_contacts(url, session):
     except Exception as e:
         return "Error", "Error"
 
-# ✅ Async Website Status Checking with Progress
-async def check_status_async(urls):
+# ✅ Async Scraping with Max Speed
+async def scrape_contacts(urls):
     results = []
-    total = len(urls)
-    progress = st.progress(0)
-    remaining_time_text = st.empty()
-
     async with aiohttp.ClientSession() as session:
-        start_time = time.time()
-
-        for i, url in enumerate(urls):
-            if not isinstance(url, str):
-                results.append("🔴 Inactive")
-                continue
-            if not url.startswith("http"):
-                url = "http://" + url
-            try:
-                async with session.head(url, timeout=5) as r:
-                    status = "🟢 Active" if r.status == 200 else "🔴 Inactive"
-            except:
-                status = "🔴 Inactive"
-            results.append(status)
-
-            # Update progress and time remaining
-            elapsed_time = time.time() - start_time
-            remaining_time = int((elapsed_time / (i + 1)) * (total - i - 1)) if i + 1 else 0
-
-            # Convert remaining time to minutes
-            remaining_minutes = remaining_time // 60
-            remaining_seconds = remaining_time % 60
-            remaining_time_text.text(f"⏳ Checking Websites... {i + 1}/{total} | Time left: {remaining_minutes}m {remaining_seconds}s")
-            progress.progress((i + 1) / total)
-
+        tasks = [extract_contacts(url, session) for url in urls]
+        results = await asyncio.gather(*tasks)
     return results
-
-def recheck_inactive_site(url):
-    try:
-        if not url.startswith("http"):
-            url = "http://" + url
-        response = requests.get(url, timeout=8)
-        if response.status_code in [200, 301, 302]:
-            return "🟢 Active"
-    except:
-        pass
-    return "🔴 Inactive"
 
 def convert_df_to_csv(df_to_convert):
     return df_to_convert.to_csv(index=False).encode('utf-8')
@@ -159,7 +109,7 @@ if uploaded_file:
     url_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if any(kw in col_lower for kw in ['domain', 'website', 'url']) and not any(social in col_lower for social in SOCIAL_KEYWORDS):
+        if any(kw in col_lower for kw in ['domain', 'website', 'url']) and not any(social in col_lower for social in ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']):
             url_col = col
             break
 
@@ -173,43 +123,14 @@ if uploaded_file:
 
     urls = df[url_col].astype(str).tolist()
 
-    st.subheader("🌐 Checking Website Status")
-    status_list = asyncio.run(check_status_async(urls))
-
-    # Recheck inactive sites
-    inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
-    re_urls = [urls[i] for i in inactive_indices]
-    with st.spinner("♻️ Rechecking inactive sites..."):
-        with ThreadPoolExecutor(max_workers=50) as executor:  # Increase max workers
-            rechecked = list(executor.map(recheck_inactive_site, re_urls))
-        for idx, new_status in zip(inactive_indices, rechecked):
-            status_list[idx] = new_status
-
-    df["Website Status"] = status_list
-    df = df[df["Website Status"] == "🟢 Active"]
-    st.success(f"✅ Website check complete. Active domains: {len(df)}")
-
-    df['Emails'] = ''
-    df['Phone Numbers'] = ''
-
     st.subheader("🔍 Scraping Contacts")
-    results = []
     progress = st.progress(0)
     status_text = st.empty()
 
-    urls = df[url_col].tolist()
-    total = len(urls)
     start = time.time()
 
     # Use asyncio for non-blocking scraping
-    async def scrape_contacts():
-        with aiohttp.ClientSession() as session:
-            tasks = []
-            for url in urls:
-                tasks.append(extract_contacts(url, session))
-            return await asyncio.gather(*tasks)
-
-    results = asyncio.run(scrape_contacts())
+    results = asyncio.run(scrape_contacts(urls))
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
@@ -242,7 +163,7 @@ if uploaded_file:
 
     st.markdown("### 📈 Scraping Summary")
     st.markdown(f"""
-    - 🏢 **Total Active Domains Processed:** `{total}`
+    - 🏢 **Total Domains Processed:** `{total}`
     - 📬 **Emails Found:** `{emails_found}`
     - 📞 **UK Phone Numbers Found:** `{phones_found}`
     - ⚠️ **Errors:** `{errors}`
