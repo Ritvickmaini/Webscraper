@@ -99,12 +99,16 @@ def extract_contacts(url):
     except:
         return "Error", "Error"
 
+# ✅ Async Website Status Checking with Progress
 async def check_status_async(urls):
     results = []
-    progress = st.progress(0)
     total = len(urls)
+    progress = st.progress(0)
+    remaining_time_text = st.empty()
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=5) as client:
+        start_time = time.time()
+
         for i, url in enumerate(urls):
             if not isinstance(url, str):
                 results.append("🔴 Inactive")
@@ -117,6 +121,11 @@ async def check_status_async(urls):
             except:
                 status = "🔴 Inactive"
             results.append(status)
+
+            # Update progress and time remaining
+            elapsed_time = time.time() - start_time
+            remaining_time = int((elapsed_time / (i + 1)) * (total - i - 1)) if i + 1 else 0
+            remaining_time_text.text(f"⏳ Checking Websites... {i + 1}/{total} | Time left: {remaining_time}s")
             progress.progress((i + 1) / total)
 
     return results
