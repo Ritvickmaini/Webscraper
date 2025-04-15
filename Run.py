@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
-import requests
+import httpx
+import asyncio
 from bs4 import BeautifulSoup
 import re
 from concurrent.futures import ThreadPoolExecutor
@@ -15,12 +16,10 @@ if query_params.get("ping") == ["true"]:
     st.write("✅ App is alive!")
     st.stop()
 
-# Regex patterns
 EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
 
-# Streamlit UI
 st.markdown("""
     <style>
         body { background-color: #0f1117; color: #f0f2f6; }
@@ -80,7 +79,6 @@ def extract_contacts(url):
     try:
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
-
         visible_text = " ".join(soup.stripped_strings)
         emails = re.findall(EMAIL_REGEX, visible_text)
 
@@ -97,19 +95,30 @@ def extract_contacts(url):
     except:
         return "Error", "Error"
 
-def check_website_status_fast(url):
-    if not isinstance(url, str):
-        return "🔴 Inactive"
-    try:
-        if not url.startswith("http"):
-            url = "http://" + url
-        response = requests.head(url, timeout=5, allow_redirects=True)
-        if response.status_code in [200, 301, 302]:
-            return "🟢 Active"
-        else:
-            return "🔴 Inactive"
-    except:
-        return "🔴 Inactive"
+async def check_status_async(urls):
+    results = []
+    progress = st.progress(0)
+    total = len(urls)
+    active_count = 0
+
+    async with httpx.AsyncClient(follow_redirects=True, timeout=5) as client:
+        for i, url in enumerate(urls):
+            if not isinstance(url, str):
+                results.append("🔴 Inactive")
+                continue
+            if not url.startswith("http"):
+                url = "http://" + url
+            try:
+                r = await client.head(url)
+                status = "🟢 Active" if r.status_code in [200, 301, 302] else "🔴 Inactive"
+            except:
+                status = "🔴 Inactive"
+            results.append(status)
+            if status == "🟢 Active":
+                active_count += 1
+            progress.progress((i + 1) / total)
+
+    return results
 
 def recheck_inactive_site(url):
     try:
@@ -149,39 +158,46 @@ if uploaded_file:
     st.subheader("📄 Uploaded File Preview")
     st.dataframe(df)
 
-    urls = df[url_col].astype(str)
+    urls = df[url_col].astype(str).tolist()
 
-    # Step 1: Website status check
-    with st.spinner("🔍 Checking which websites are active before scraping..."):
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            status_list = list(executor.map(check_website_status_fast, urls))
+    st.subheader("🌐 Checking Website Status (with progress bar)")
+    start_time = time.time()
+    status_list = asyncio.run(check_status_async(urls))
 
-        inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
-        re_urls = urls.iloc[inactive_indices].tolist()
+    inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
+    re_urls = [urls[i] for i in inactive_indices]
 
+    with st.spinner("♻️ Rechecking inactive sites..."):
         with ThreadPoolExecutor(max_workers=25) as executor:
             rechecked = list(executor.map(recheck_inactive_site, re_urls))
-
         for idx, new_status in zip(inactive_indices, rechecked):
             status_list[idx] = new_status
 
-        df["Website Status"] = status_list
-        df = df[df["Website Status"] == "🟢 Active"]
+    df["Website Status"] = status_list
+    df = df[df["Website Status"] == "🟢 Active"]
+
+    st.success(f"✅ Website check complete in {round(time.time() - start_time, 2)} seconds.")
 
     df['Emails'] = ''
     df['Phone Numbers'] = ''
     urls = df[url_col].tolist()
 
-    with st.spinner("⚙️ Scraping in progress..."):
-        st.markdown("""
-        <div class="loading-container">
-            <div class="loader"></div>
-            <div style="color: #00ffe0; font-weight: bold;">Scraping websites, please wait...</div>
-        </div>
-        """, unsafe_allow_html=True)
-        time.sleep(0.5)
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            results = list(executor.map(extract_contacts, urls))
+    st.subheader("🔍 Scraping Contacts")
+    results = []
+    progress = st.progress(0)
+    status_text = st.empty()
+    total = len(urls)
+    start = time.time()
+
+    with ThreadPoolExecutor(max_workers=50) as executor:
+        futures = executor.map(extract_contacts, urls)
+        for i, res in enumerate(futures):
+            results.append(res)
+            elapsed = time.time() - start
+            per_item = elapsed / (i + 1)
+            remaining = per_item * (total - i - 1)
+            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {int(remaining)}s")
+            progress.progress((i + 1) / total)
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
