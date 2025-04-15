@@ -4,8 +4,8 @@ import asyncio
 import aiohttp
 from bs4 import BeautifulSoup
 import re
-from concurrent.futures import ThreadPoolExecutor
 import time
+from concurrent.futures import ThreadPoolExecutor
 
 # ✅ CONFIG
 st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
@@ -72,7 +72,7 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-def extract_contacts(url, session):
+async def extract_contacts(url, session):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
@@ -95,7 +95,7 @@ def extract_contacts(url, session):
                     phone_numbers.update(cleaned)
 
             return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
-    except:
+    except Exception as e:
         return "Error", "Error"
 
 # ✅ Async Website Status Checking with Progress
