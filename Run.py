@@ -1,11 +1,10 @@
 import streamlit as st
 import pandas as pd
-import httpx
 import asyncio
+import aiohttp
 from bs4 import BeautifulSoup
 import re
 from concurrent.futures import ThreadPoolExecutor
-import requests
 import time
 
 # ✅ CONFIG
@@ -73,7 +72,7 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-def extract_contacts(url):
+def extract_contacts(url, session):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
@@ -81,21 +80,21 @@ def extract_contacts(url):
         url = "http://" + url
 
     try:
-        response = requests.get(url, timeout=10)
-        soup = BeautifulSoup(response.text, 'html.parser')
-        visible_text = " ".join(soup.stripped_strings)
-        emails = re.findall(EMAIL_REGEX, visible_text)
+        async with session.get(url, timeout=10) as response:
+            soup = BeautifulSoup(await response.text(), 'html.parser')
+            visible_text = " ".join(soup.stripped_strings)
+            emails = re.findall(EMAIL_REGEX, visible_text)
 
-        phone_numbers = set()
-        for tag in ['header', 'footer']:
-            section = soup.find(tag)
-            if section:
-                section_text = section.get_text(separator=" ", strip=True)
-                raw_numbers = re.findall(PHONE_REGEX, section_text)
-                cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
-                phone_numbers.update(cleaned)
+            phone_numbers = set()
+            for tag in ['header', 'footer']:
+                section = soup.find(tag)
+                if section:
+                    section_text = section.get_text(separator=" ", strip=True)
+                    raw_numbers = re.findall(PHONE_REGEX, section_text)
+                    cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
+                    phone_numbers.update(cleaned)
 
-        return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
+            return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
     except:
         return "Error", "Error"
 
@@ -106,7 +105,7 @@ async def check_status_async(urls):
     progress = st.progress(0)
     remaining_time_text = st.empty()
 
-    async with httpx.AsyncClient(follow_redirects=True, timeout=5) as client:
+    async with aiohttp.ClientSession() as session:
         start_time = time.time()
 
         for i, url in enumerate(urls):
@@ -116,8 +115,8 @@ async def check_status_async(urls):
             if not url.startswith("http"):
                 url = "http://" + url
             try:
-                r = await client.head(url)
-                status = "🟢 Active" if r.status_code in [200, 301, 302] else "🔴 Inactive"
+                async with session.head(url, timeout=5) as r:
+                    status = "🟢 Active" if r.status == 200 else "🔴 Inactive"
             except:
                 status = "🔴 Inactive"
             results.append(status)
@@ -202,18 +201,11 @@ if uploaded_file:
     total = len(urls)
     start = time.time()
 
-    with ThreadPoolExecutor(max_workers=100) as executor:  # Increase max workers
-        futures = executor.map(extract_contacts, urls)
-        for i, res in enumerate(futures):
-            results.append(res)
-            elapsed = time.time() - start
-            remaining = int((elapsed / (i+1)) * (total - i - 1))
-
-            # Convert remaining time to minutes
-            remaining_minutes = remaining // 60
-            remaining_seconds = remaining % 60
-            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {remaining_minutes}m {remaining_seconds}s")
-            progress.progress((i + 1) / total)
+    with aiohttp.ClientSession() as session:
+        tasks = []
+        for url in urls:
+            tasks.append(extract_contacts(url, session))
+        results = await asyncio.gather(*tasks)
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
