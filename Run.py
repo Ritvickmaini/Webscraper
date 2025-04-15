@@ -17,7 +17,7 @@ if query_params.get("ping") == ["true"]:
     st.stop()
 
 # ✅ Constants
-EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zAZ0-9]{2,}'
+EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zAZ0-9.-]+\.[a-zAZ0-9]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
 SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
@@ -201,11 +201,15 @@ if uploaded_file:
     total = len(urls)
     start = time.time()
 
-    with aiohttp.ClientSession() as session:
-        tasks = []
-        for url in urls:
-            tasks.append(extract_contacts(url, session))
-        results = await asyncio.gather(*tasks)
+    # Use asyncio for non-blocking scraping
+    async def scrape_contacts():
+        with aiohttp.ClientSession() as session:
+            tasks = []
+            for url in urls:
+                tasks.append(extract_contacts(url, session))
+            return await asyncio.gather(*tasks)
+
+    results = asyncio.run(scrape_contacts())
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
