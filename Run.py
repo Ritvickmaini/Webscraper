@@ -60,7 +60,7 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-async def extract_contacts(url, session, progress, total_urls, retries=3):
+async def extract_contacts(url, session, progress_callback, idx, total, retries=3):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
@@ -84,7 +84,7 @@ async def extract_contacts(url, session, progress, total_urls, retries=3):
                         cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
                         phone_numbers.update(cleaned)
 
-                progress.progress(int((len(progress._queue) / total_urls) * 100))  # Update the progress bar
+                progress_callback(idx + 1, total)  # Update progress bar
                 return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
         except Exception as e:
             attempt += 1
@@ -94,16 +94,10 @@ async def extract_contacts(url, session, progress, total_urls, retries=3):
                 time.sleep(2)  # Small delay before retrying
 
 # ✅ Async Scraping with Max Speed
-async def scrape_contacts(urls):
+async def scrape_contacts(urls, progress_callback):
     results = []
     async with aiohttp.ClientSession() as session:
-        tasks = []
-        total_urls = len(urls)
-        progress = st.progress(0)  # Initialize progress bar
-
-        for i, url in enumerate(urls):
-            tasks.append(extract_contacts(url, session, progress, total_urls))
-
+        tasks = [extract_contacts(url, session, progress_callback, idx, len(urls)) for idx, url in enumerate(urls)]
         results = await asyncio.gather(*tasks)
     return results
 
@@ -137,12 +131,18 @@ if uploaded_file:
     urls = df[url_col].astype(str).tolist()
 
     st.subheader("🔍 Scraping Contacts")
+    progress = st.progress(0)
     status_text = st.empty()
 
     start = time.time()
 
+    # Function to update progress bar and display scraped/remaining websites
+    def update_progress(scraped, total):
+        progress.progress(scraped / total)
+        status_text.markdown(f"Scraped: {scraped}/{total} websites")
+
     # Use asyncio for non-blocking scraping
-    results = asyncio.run(scrape_contacts(urls))
+    results = asyncio.run(scrape_contacts(urls, update_progress))
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
