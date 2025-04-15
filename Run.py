@@ -181,7 +181,7 @@ if uploaded_file:
     inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
     re_urls = [urls[i] for i in inactive_indices]
     with st.spinner("♻️ Rechecking inactive sites..."):
-        with ThreadPoolExecutor(max_workers=30) as executor:
+        with ThreadPoolExecutor(max_workers=50) as executor:  # Increase max workers
             rechecked = list(executor.map(recheck_inactive_site, re_urls))
         for idx, new_status in zip(inactive_indices, rechecked):
             status_list[idx] = new_status
@@ -202,7 +202,7 @@ if uploaded_file:
     total = len(urls)
     start = time.time()
 
-    with ThreadPoolExecutor(max_workers=50) as executor:
+    with ThreadPoolExecutor(max_workers=100) as executor:  # Increase max workers
         futures = executor.map(extract_contacts, urls)
         for i, res in enumerate(futures):
             results.append(res)
