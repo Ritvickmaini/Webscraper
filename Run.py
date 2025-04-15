@@ -60,7 +60,7 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-async def extract_contacts(url, session, retries=3):
+async def extract_contacts(url, session, progress, total_urls, retries=3):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
@@ -84,6 +84,7 @@ async def extract_contacts(url, session, retries=3):
                         cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
                         phone_numbers.update(cleaned)
 
+                progress.progress(int((len(progress._queue) / total_urls) * 100))  # Update the progress bar
                 return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
         except Exception as e:
             attempt += 1
@@ -96,7 +97,13 @@ async def extract_contacts(url, session, retries=3):
 async def scrape_contacts(urls):
     results = []
     async with aiohttp.ClientSession() as session:
-        tasks = [extract_contacts(url, session) for url in urls]
+        tasks = []
+        total_urls = len(urls)
+        progress = st.progress(0)  # Initialize progress bar
+
+        for i, url in enumerate(urls):
+            tasks.append(extract_contacts(url, session, progress, total_urls))
+
         results = await asyncio.gather(*tasks)
     return results
 
@@ -130,7 +137,6 @@ if uploaded_file:
     urls = df[url_col].astype(str).tolist()
 
     st.subheader("🔍 Scraping Contacts")
-    progress = st.progress(0)
     status_text = st.empty()
 
     start = time.time()
