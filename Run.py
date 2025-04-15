@@ -5,21 +5,25 @@ import asyncio
 from bs4 import BeautifulSoup
 import re
 from concurrent.futures import ThreadPoolExecutor
+import requests
 import time
 
-# ✅ MUST BE FIRST
+# ✅ CONFIG
 st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
 
-# ✅ PING ROUTE FOR UPTIMEROBOT
+# ✅ UptimeRobot Ping Route
 query_params = st.query_params
 if query_params.get("ping") == ["true"]:
     st.write("✅ App is alive!")
     st.stop()
 
+# ✅ Constants
 EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
+SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
 
+# ✅ Styling
 st.markdown("""
     <style>
         body { background-color: #0f1117; color: #f0f2f6; }
@@ -40,11 +44,13 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
+# ✅ Header
 st.markdown("<h1 style='text-align: center;'>🧠 Smart Contact Scraper</h1>", unsafe_allow_html=True)
 st.markdown("Upload a CSV with company domains — this app scrapes **email addresses** and **UK phone numbers** from websites.")
 
 uploaded_file = st.file_uploader("📤 Upload your CSV", type=['csv'])
 
+# ✅ Helper functions
 def is_social_url(url):
     return any(social in url for social in SOCIAL_DOMAINS)
 
@@ -53,9 +59,7 @@ def is_uk_phone_number(number):
     if number.startswith('44'):
         number = '0' + number[2:]
     if number.startswith('0'):
-        if number.startswith('01') or number.startswith('02'):
-            return len(number) == 11
-        elif number.startswith('07'):
+        if number.startswith('01') or number.startswith('02') or number.startswith('07'):
             return len(number) == 11
     return False
 
@@ -99,7 +103,6 @@ async def check_status_async(urls):
     results = []
     progress = st.progress(0)
     total = len(urls)
-    active_count = 0
 
     async with httpx.AsyncClient(follow_redirects=True, timeout=5) as client:
         for i, url in enumerate(urls):
@@ -114,8 +117,6 @@ async def check_status_async(urls):
             except:
                 status = "🔴 Inactive"
             results.append(status)
-            if status == "🟢 Active":
-                active_count += 1
             progress.progress((i + 1) / total)
 
     return results
@@ -127,11 +128,14 @@ def recheck_inactive_site(url):
         response = requests.get(url, timeout=8)
         if response.status_code in [200, 301, 302]:
             return "🟢 Active"
-        else:
-            return "🔴 Inactive"
     except:
-        return "🔴 Inactive"
+        pass
+    return "🔴 Inactive"
 
+def convert_df_to_csv(df_to_convert):
+    return df_to_convert.to_csv(index=False).encode('utf-8')
+
+# ✅ MAIN
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
@@ -139,14 +143,11 @@ if uploaded_file:
         st.error(f"❌ Error reading CSV: {e}")
         st.stop()
 
-    SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
+    # Auto-detect domain/URL column
     url_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if (
-            any(kw in col_lower for kw in ['domain', 'website', 'url']) and
-            not any(social in col_lower for social in SOCIAL_KEYWORDS)
-        ):
+        if any(kw in col_lower for kw in ['domain', 'website', 'url']) and not any(social in col_lower for social in SOCIAL_KEYWORDS):
             url_col = col
             break
 
@@ -160,32 +161,31 @@ if uploaded_file:
 
     urls = df[url_col].astype(str).tolist()
 
-    st.subheader("🌐 Checking Website Status (with progress bar)")
-    start_time = time.time()
+    st.subheader("🌐 Checking Website Status")
     status_list = asyncio.run(check_status_async(urls))
 
+    # Recheck inactive sites
     inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
     re_urls = [urls[i] for i in inactive_indices]
-
     with st.spinner("♻️ Rechecking inactive sites..."):
-        with ThreadPoolExecutor(max_workers=25) as executor:
+        with ThreadPoolExecutor(max_workers=30) as executor:
             rechecked = list(executor.map(recheck_inactive_site, re_urls))
         for idx, new_status in zip(inactive_indices, rechecked):
             status_list[idx] = new_status
 
     df["Website Status"] = status_list
     df = df[df["Website Status"] == "🟢 Active"]
-
-    st.success(f"✅ Website check complete in {round(time.time() - start_time, 2)} seconds.")
+    st.success(f"✅ Website check complete. Active domains: {len(df)}")
 
     df['Emails'] = ''
     df['Phone Numbers'] = ''
-    urls = df[url_col].tolist()
 
     st.subheader("🔍 Scraping Contacts")
     results = []
     progress = st.progress(0)
     status_text = st.empty()
+
+    urls = df[url_col].tolist()
     total = len(urls)
     start = time.time()
 
@@ -194,20 +194,19 @@ if uploaded_file:
         for i, res in enumerate(futures):
             results.append(res)
             elapsed = time.time() - start
-            per_item = elapsed / (i + 1)
-            remaining = per_item * (total - i - 1)
-            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {int(remaining)}s")
+            remaining = int((elapsed / (i+1)) * (total - i - 1))
+            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {remaining}s")
             progress.progress((i + 1) / total)
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
 
+    # Reorder columns
     cols = df.columns.tolist()
-    if url_col in cols:
-        cols.remove('Emails')
-        cols.remove('Phone Numbers')
-        cols.insert(cols.index(url_col) + 1, 'Emails')
-        cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
+    cols.remove('Emails')
+    cols.remove('Phone Numbers')
+    cols.insert(cols.index(url_col) + 1, 'Emails')
+    cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
     df = df[cols]
 
     filtered_df = df[
@@ -225,33 +224,27 @@ if uploaded_file:
     st.subheader("📄 Full Results (All Rows)")
     st.dataframe(df)
 
-    st.subheader("📊 Filtered Results (With Emails or UK Phone Numbers)")
+    st.subheader("📊 Filtered Results (With Contacts)")
     st.dataframe(filtered_df)
 
     st.markdown("### 📈 Scraping Summary")
     st.markdown(f"""
-    - 🏢 **Total Active Domains Processed:** `{total}`  
-    - 📬 **Emails Found:** `{emails_found}`  
-    - 📞 **UK Phone Numbers Found:** `{phones_found}`  
-    - ⚠️ **Errors:** `{errors}`  
+    - 🏢 **Total Active Domains Processed:** `{total}`
+    - 📬 **Emails Found:** `{emails_found}`
+    - 📞 **UK Phone Numbers Found:** `{phones_found}`
+    - ⚠️ **Errors:** `{errors}`
     """)
-
-    def convert_df_to_csv(df_to_convert):
-        return df_to_convert.to_csv(index=False).encode('utf-8')
-
-    csv_filtered = convert_df_to_csv(filtered_df)
-    csv_full = convert_df_to_csv(df)
 
     st.download_button(
         label="📥 Download Filtered CSV (Only Leads with Contacts)",
-        data=csv_filtered,
+        data=convert_df_to_csv(filtered_df),
         file_name='scraped_contacts_filtered.csv',
         mime='text/csv'
     )
 
     st.download_button(
-        label="📄 Download Full CSV (All Results)",
-        data=csv_full,
+        label="📥 Download Full CSV (All Active Domains)",
+        data=convert_df_to_csv(df),
         file_name='scraped_contacts_full.csv',
         mime='text/csv'
     )
