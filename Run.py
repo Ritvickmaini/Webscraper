@@ -20,7 +20,7 @@ EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
 
-# Streamlit UI
+# Streamlit UI styling
 st.markdown("""
     <style>
         body { background-color: #0f1117; color: #f0f2f6; }
@@ -38,6 +38,24 @@ st.markdown("""
             border-radius: 8px;
             font-weight: bold;
         }
+        .loading-container {
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        .loader {
+            border: 6px solid #f3f3f3;
+            border-top: 6px solid #00ffe0;
+            border-radius: 50%;
+            width: 50px;
+            height: 50px;
+            animation: spin 1s linear infinite;
+            margin-bottom: 10px;
+        }
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
     </style>
 """, unsafe_allow_html=True)
 
@@ -46,6 +64,7 @@ st.markdown("Upload a CSV with company domains — this app scrapes **email addr
 
 uploaded_file = st.file_uploader("📤 Upload your CSV", type=['csv'])
 
+# Helper functions
 def is_social_url(url):
     return any(social in url for social in SOCIAL_DOMAINS)
 
@@ -73,14 +92,11 @@ def is_valid_phone(number):
 def extract_contacts(url):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
-
     if not url.startswith("http"):
         url = "http://" + url
-
     try:
         response = requests.get(url, timeout=10)
         soup = BeautifulSoup(response.text, 'html.parser')
-
         visible_text = " ".join(soup.stripped_strings)
         emails = re.findall(EMAIL_REGEX, visible_text)
 
@@ -123,6 +139,7 @@ def recheck_inactive_site(url):
     except:
         return "🔴 Inactive"
 
+# Main app logic
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
@@ -151,27 +168,25 @@ if uploaded_file:
 
     urls = df[url_col].astype(str)
 
-    # Step 1: Website status check
-    status_bar = st.progress(0)  # Initialize progress bar
+    status_bar = st.progress(0)
     with st.spinner("🔍 Checking which websites are active before scraping..."):
         with ThreadPoolExecutor(max_workers=100) as executor:
             status_list = []
             for i, status in enumerate(executor.map(check_website_status_fast, urls)):
                 status_list.append(status)
-                status_bar.progress((i + 1) / len(urls))  # Update progress bar
+                status_bar.progress((i + 1) / len(urls))
         df["Website Status"] = status_list
 
     inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
     re_urls = urls.iloc[inactive_indices].tolist()
 
-    # Recheck inactive websites
-    recheck_bar = st.progress(0)  # Initialize progress bar for rechecking
+    recheck_bar = st.progress(0)
     with st.spinner("🔄 Rechecking inactive websites..."):
         with ThreadPoolExecutor(max_workers=25) as executor:
             rechecked = []
             for i, new_status in enumerate(executor.map(recheck_inactive_site, re_urls)):
                 rechecked.append(new_status)
-                recheck_bar.progress((i + 1) / len(re_urls))  # Update progress bar
+                recheck_bar.progress((i + 1) / len(re_urls))
         for idx, new_status in zip(inactive_indices, rechecked):
             status_list[idx] = new_status
 
@@ -182,8 +197,7 @@ if uploaded_file:
     df['Phone Numbers'] = ''
     urls = df[url_col].tolist()
 
-    # Step 2: Scraping
-    scraping_bar = st.progress(0)  # Initialize progress bar for scraping
+    scraping_bar = st.progress(0)
     with st.spinner("⚙️ Scraping in progress..."):
         st.markdown("""
         <div class="loading-container">
@@ -196,7 +210,7 @@ if uploaded_file:
             results = []
             for i, result in enumerate(executor.map(extract_contacts, urls)):
                 results.append(result)
-                scraping_bar.progress((i + 1) / len(urls))  # Update progress bar
+                scraping_bar.progress((i + 1) / len(urls))
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
@@ -205,8 +219,9 @@ if uploaded_file:
     if url_col in cols:
         cols.remove('Emails')
         cols.remove('Phone Numbers')
-        cols.insert(cols.index(url_col) + 1, 'Emails')
-        cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
+        insert_pos = cols.index(url_col) + 1
+        cols.insert(insert_pos, 'Phone Numbers')
+        cols.insert(insert_pos, 'Emails')
     df = df[cols]
 
     filtered_df = df[
@@ -238,19 +253,5 @@ if uploaded_file:
     def convert_df_to_csv(df_to_convert):
         return df_to_convert.to_csv(index=False).encode('utf-8')
 
-    csv_filtered = convert_df_to_csv(filtered_df)
-    csv_full = convert_df_to_csv(df)
-
-    st.download_button(
-        label="📥 Download Filtered CSV (Only Leads with Contacts)",
-        data=csv_filtered,
-        file_name='scraped_contacts_filtered.csv',
-        mime='text/csv'
-    )
-
-    st.download_button(
-        label="📄 Download Full CSV (All Results)",
-        data=csv_full,
-        file_name='scraped_contacts_full.csv',
-        mime='text/csv'
-    )
+    st.download_button("📥 Download Filtered CSV (Only Leads with Contacts)", convert_df_to_csv(filtered_df), file_name='scraped_contacts_filtered.csv', mime='text/csv')
+    st.download_button("📄 Download Full CSV (All Results)", convert_df_to_csv(df), file_name='scraped_contacts_full.csv', mime='text/csv')
