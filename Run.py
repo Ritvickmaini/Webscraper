@@ -151,17 +151,27 @@ if uploaded_file:
 
     urls = df[url_col].astype(str)
 
-    # Step 1: Website status check
-    with st.spinner("🔍 Checking which websites are active before scraping..."):
-        with ThreadPoolExecutor(max_workers=100) as executor:
-            status_list = list(executor.map(check_website_status_fast, urls))
+    # Step 1: Website status check with progress bar
+    st.subheader("🔍 Checking Active Websites...")
+    status_bar = st.progress(0)
+    total_urls = len(urls)
+    with st.spinner("Checking website status..."):
+        status_list = []
+        for idx, url in enumerate(urls):
+            status = check_website_status_fast(url)
+            status_list.append(status)
+            status_bar.progress((idx + 1) / total_urls)
+        
+    inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
+    re_urls = urls.iloc[inactive_indices].tolist()
 
-        inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
-        re_urls = urls.iloc[inactive_indices].tolist()
-
-        with ThreadPoolExecutor(max_workers=25) as executor:
-            rechecked = list(executor.map(recheck_inactive_site, re_urls))
-
+    with st.spinner("Rechecking inactive websites..."):
+        rechecked = []
+        for idx, url in enumerate(re_urls):
+            new_status = recheck_inactive_site(url)
+            rechecked.append(new_status)
+            status_bar.progress((idx + 1) / len(re_urls))
+        
         for idx, new_status in zip(inactive_indices, rechecked):
             status_list[idx] = new_status
 
@@ -172,17 +182,16 @@ if uploaded_file:
     df['Phone Numbers'] = ''
     urls = df[url_col].tolist()
 
-    with st.spinner("⚙️ Scraping in progress..."):
-        st.markdown("""
-        <div class="loading-container">
-            <div class="loader"></div>
-            <div style="color: #00ffe0; font-weight: bold;">Scraping websites, please wait...</div>
-        </div>
-        """, unsafe_allow_html=True)
-        time.sleep(0.5)
-        with ThreadPoolExecutor(max_workers=50) as executor:
-            results = list(executor.map(extract_contacts, urls))
-
+    # Step 2: Scraping with progress bar
+    st.subheader("⚙️ Scraping Contacts...")
+    scrape_bar = st.progress(0)
+    with st.spinner("Scraping websites for emails and phone numbers..."):
+        results = []
+        for idx, url in enumerate(urls):
+            result = extract_contacts(url)
+            results.append(result)
+            scrape_bar.progress((idx + 1) / len(urls))
+        
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
 
