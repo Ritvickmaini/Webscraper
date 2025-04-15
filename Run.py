@@ -1,16 +1,26 @@
 import streamlit as st
 import pandas as pd
-import asyncio
-import aiohttp
+import requests
 from bs4 import BeautifulSoup
 import re
-import time
 from concurrent.futures import ThreadPoolExecutor
+import time
 
-# ✅ CONFIG
+# ✅ MUST BE FIRST
 st.set_page_config(page_title="Smart Contact Scraper", layout="wide")
 
-# ✅ Styling
+# ✅ PING ROUTE FOR UPTIMEROBOT
+query_params = st.query_params
+if query_params.get("ping") == ["true"]:
+    st.write("✅ App is alive!")
+    st.stop()
+
+# Regex patterns
+EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
+SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
+
+# Streamlit UI
 st.markdown("""
     <style>
         body { background-color: #0f1117; color: #f0f2f6; }
@@ -31,22 +41,22 @@ st.markdown("""
     </style>
 """, unsafe_allow_html=True)
 
-# ✅ Header
 st.markdown("<h1 style='text-align: center;'>🧠 Smart Contact Scraper</h1>", unsafe_allow_html=True)
 st.markdown("Upload a CSV with company domains — this app scrapes **email addresses** and **UK phone numbers** from websites.")
 
 uploaded_file = st.file_uploader("📤 Upload your CSV", type=['csv'])
 
-# ✅ Helper functions
 def is_social_url(url):
-    return any(social in url for social in ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com'])
+    return any(social in url for social in SOCIAL_DOMAINS)
 
 def is_uk_phone_number(number):
     number = re.sub(r'\D', '', number)
     if number.startswith('44'):
         number = '0' + number[2:]
     if number.startswith('0'):
-        if number.startswith('01') or number.startswith('02') or number.startswith('07'):
+        if number.startswith('01') or number.startswith('02'):
+            return len(number) == 11
+        elif number.startswith('07'):
             return len(number) == 11
     return False
 
@@ -60,51 +70,59 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-async def extract_contacts(url, session, progress_callback, idx, total, retries=3):
+def extract_contacts(url):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
     if not url.startswith("http"):
         url = "http://" + url
 
-    attempt = 0
-    while attempt < retries:
-        try:
-            async with session.get(url, timeout=10) as response:
-                soup = BeautifulSoup(await response.text(), 'html.parser')
-                visible_text = " ".join(soup.stripped_strings)
-                emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}', visible_text)
+    try:
+        response = requests.get(url, timeout=10)
+        soup = BeautifulSoup(response.text, 'html.parser')
 
-                phone_numbers = set()
-                for tag in ['header', 'footer']:
-                    section = soup.find(tag)
-                    if section:
-                        section_text = section.get_text(separator=" ", strip=True)
-                        raw_numbers = re.findall(r'(\+?\d[\d\s\-\(\)]{7,}\d)', section_text)
-                        cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
-                        phone_numbers.update(cleaned)
+        visible_text = " ".join(soup.stripped_strings)
+        emails = re.findall(EMAIL_REGEX, visible_text)
 
-                progress_callback(idx + 1, total)  # Update progress bar
-                return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
-        except Exception as e:
-            attempt += 1
-            if attempt == retries:
-                return "Error", "Error"
-            else:
-                time.sleep(2)  # Small delay before retrying
+        phone_numbers = set()
+        for tag in ['header', 'footer']:
+            section = soup.find(tag)
+            if section:
+                section_text = section.get_text(separator=" ", strip=True)
+                raw_numbers = re.findall(PHONE_REGEX, section_text)
+                cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
+                phone_numbers.update(cleaned)
 
-# ✅ Async Scraping with Max Speed
-async def scrape_contacts(urls, progress_callback):
-    results = []
-    async with aiohttp.ClientSession() as session:
-        tasks = [extract_contacts(url, session, progress_callback, idx, len(urls)) for idx, url in enumerate(urls)]
-        results = await asyncio.gather(*tasks)
-    return results
+        return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
+    except:
+        return "Error", "Error"
 
-def convert_df_to_csv(df_to_convert):
-    return df_to_convert.to_csv(index=False).encode('utf-8')
+def check_website_status_fast(url):
+    if not isinstance(url, str):
+        return "🔴 Inactive"
+    try:
+        if not url.startswith("http"):
+            url = "http://" + url
+        response = requests.head(url, timeout=5, allow_redirects=True)
+        if response.status_code in [200, 301, 302]:
+            return "🟢 Active"
+        else:
+            return "🔴 Inactive"
+    except:
+        return "🔴 Inactive"
 
-# ✅ MAIN
+def recheck_inactive_site(url):
+    try:
+        if not url.startswith("http"):
+            url = "http://" + url
+        response = requests.get(url, timeout=8)
+        if response.status_code in [200, 301, 302]:
+            return "🟢 Active"
+        else:
+            return "🔴 Inactive"
+    except:
+        return "🔴 Inactive"
+
 if uploaded_file:
     try:
         df = pd.read_csv(uploaded_file)
@@ -112,11 +130,14 @@ if uploaded_file:
         st.error(f"❌ Error reading CSV: {e}")
         st.stop()
 
-    # Auto-detect domain/URL column
+    SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
     url_col = None
     for col in df.columns:
         col_lower = col.lower()
-        if any(kw in col_lower for kw in ['domain', 'website', 'url']) and not any(social in col_lower for social in ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']):
+        if (
+            any(kw in col_lower for kw in ['domain', 'website', 'url']) and
+            not any(social in col_lower for social in SOCIAL_KEYWORDS)
+        ):
             url_col = col
             break
 
@@ -128,31 +149,49 @@ if uploaded_file:
     st.subheader("📄 Uploaded File Preview")
     st.dataframe(df)
 
-    urls = df[url_col].astype(str).tolist()
+    urls = df[url_col].astype(str)
 
-    st.subheader("🔍 Scraping Contacts")
-    progress = st.progress(0)
-    status_text = st.empty()
+    # Step 1: Website status check
+    with st.spinner("🔍 Checking which websites are active before scraping..."):
+        with ThreadPoolExecutor(max_workers=100) as executor:
+            status_list = list(executor.map(check_website_status_fast, urls))
 
-    start = time.time()
+        inactive_indices = [i for i, status in enumerate(status_list) if status == "🔴 Inactive"]
+        re_urls = urls.iloc[inactive_indices].tolist()
 
-    # Function to update progress bar and display scraped/remaining websites
-    def update_progress(scraped, total):
-        progress.progress(scraped / total)
-        status_text.markdown(f"Scraped: {scraped}/{total} websites")
+        with ThreadPoolExecutor(max_workers=25) as executor:
+            rechecked = list(executor.map(recheck_inactive_site, re_urls))
 
-    # Use asyncio for non-blocking scraping
-    results = asyncio.run(scrape_contacts(urls, update_progress))
+        for idx, new_status in zip(inactive_indices, rechecked):
+            status_list[idx] = new_status
+
+        df["Website Status"] = status_list
+        df = df[df["Website Status"] == "🟢 Active"]
+
+    df['Emails'] = ''
+    df['Phone Numbers'] = ''
+    urls = df[url_col].tolist()
+
+    with st.spinner("⚙️ Scraping in progress..."):
+        st.markdown("""
+        <div class="loading-container">
+            <div class="loader"></div>
+            <div style="color: #00ffe0; font-weight: bold;">Scraping websites, please wait...</div>
+        </div>
+        """, unsafe_allow_html=True)
+        time.sleep(0.5)
+        with ThreadPoolExecutor(max_workers=50) as executor:
+            results = list(executor.map(extract_contacts, urls))
 
     df['Emails'] = [res[0] for res in results]
     df['Phone Numbers'] = [res[1] for res in results]
 
-    # Reorder columns
     cols = df.columns.tolist()
-    cols.remove('Emails')
-    cols.remove('Phone Numbers')
-    cols.insert(cols.index(url_col) + 1, 'Emails')
-    cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
+    if url_col in cols:
+        cols.remove('Emails')
+        cols.remove('Phone Numbers')
+        cols.insert(cols.index(url_col) + 1, 'Emails')
+        cols.insert(cols.index(url_col) + 2, 'Phone Numbers')
     df = df[cols]
 
     filtered_df = df[
@@ -170,27 +209,33 @@ if uploaded_file:
     st.subheader("📄 Full Results (All Rows)")
     st.dataframe(df)
 
-    st.subheader("📊 Filtered Results (With Contacts)")
+    st.subheader("📊 Filtered Results (With Emails or UK Phone Numbers)")
     st.dataframe(filtered_df)
 
     st.markdown("### 📈 Scraping Summary")
     st.markdown(f"""
-    - 🏢 **Total Domains Processed:** `{total}`
-    - 📬 **Emails Found:** `{emails_found}`
-    - 📞 **UK Phone Numbers Found:** `{phones_found}`
-    - ⚠️ **Errors:** `{errors}`
+    - 🏢 **Total Active Domains Processed:** `{total}`  
+    - 📬 **Emails Found:** `{emails_found}`  
+    - 📞 **UK Phone Numbers Found:** `{phones_found}`  
+    - ⚠️ **Errors:** `{errors}`  
     """)
+
+    def convert_df_to_csv(df_to_convert):
+        return df_to_convert.to_csv(index=False).encode('utf-8')
+
+    csv_filtered = convert_df_to_csv(filtered_df)
+    csv_full = convert_df_to_csv(df)
 
     st.download_button(
         label="📥 Download Filtered CSV (Only Leads with Contacts)",
-        data=convert_df_to_csv(filtered_df),
+        data=csv_filtered,
         file_name='scraped_contacts_filtered.csv',
         mime='text/csv'
     )
 
     st.download_button(
-        label="📥 Download Full CSV (All Active Domains)",
-        data=convert_df_to_csv(df),
+        label="📄 Download Full CSV (All Results)",
+        data=csv_full,
         file_name='scraped_contacts_full.csv',
         mime='text/csv'
     )
