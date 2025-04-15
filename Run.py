@@ -18,7 +18,7 @@ if query_params.get("ping") == ["true"]:
     st.stop()
 
 # ✅ Constants
-EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}'
+EMAIL_REGEX = r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zAZ0-9]{2,}'
 PHONE_REGEX = r'(\+?\d[\d\s\-\(\)]{7,}\d)'
 SOCIAL_DOMAINS = ['facebook.com', 'linkedin.com', 'twitter.com', 'instagram.com', 'youtube.com']
 SOCIAL_KEYWORDS = ['linkedin', 'facebook', 'instagram', 'twitter', 'youtube']
@@ -125,7 +125,11 @@ async def check_status_async(urls):
             # Update progress and time remaining
             elapsed_time = time.time() - start_time
             remaining_time = int((elapsed_time / (i + 1)) * (total - i - 1)) if i + 1 else 0
-            remaining_time_text.text(f"⏳ Checking Websites... {i + 1}/{total} | Time left: {remaining_time}s")
+
+            # Convert remaining time to minutes
+            remaining_minutes = remaining_time // 60
+            remaining_seconds = remaining_time % 60
+            remaining_time_text.text(f"⏳ Checking Websites... {i + 1}/{total} | Time left: {remaining_minutes}m {remaining_seconds}s")
             progress.progress((i + 1) / total)
 
     return results
@@ -204,7 +208,11 @@ if uploaded_file:
             results.append(res)
             elapsed = time.time() - start
             remaining = int((elapsed / (i+1)) * (total - i - 1))
-            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {remaining}s")
+
+            # Convert remaining time to minutes
+            remaining_minutes = remaining // 60
+            remaining_seconds = remaining % 60
+            status_text.text(f"⏳ Scraping... {i + 1}/{total} | Time left: {remaining_minutes}m {remaining_seconds}s")
             progress.progress((i + 1) / total)
 
     df['Emails'] = [res[0] for res in results]
