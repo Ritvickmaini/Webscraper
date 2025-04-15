@@ -60,31 +60,37 @@ def is_valid_phone(number):
         return False
     return is_uk_phone_number(number)
 
-async def extract_contacts(url, session):
+async def extract_contacts(url, session, retries=3):
     if not isinstance(url, str) or is_social_url(url):
         return "", ""
 
     if not url.startswith("http"):
         url = "http://" + url
 
-    try:
-        async with session.get(url, timeout=5) as response:
-            soup = BeautifulSoup(await response.text(), 'html.parser')
-            visible_text = " ".join(soup.stripped_strings)
-            emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}', visible_text)
+    attempt = 0
+    while attempt < retries:
+        try:
+            async with session.get(url, timeout=10) as response:
+                soup = BeautifulSoup(await response.text(), 'html.parser')
+                visible_text = " ".join(soup.stripped_strings)
+                emails = re.findall(r'[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z0-9]{2,}', visible_text)
 
-            phone_numbers = set()
-            for tag in ['header', 'footer']:
-                section = soup.find(tag)
-                if section:
-                    section_text = section.get_text(separator=" ", strip=True)
-                    raw_numbers = re.findall(r'(\+?\d[\d\s\-\(\)]{7,}\d)', section_text)
-                    cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
-                    phone_numbers.update(cleaned)
+                phone_numbers = set()
+                for tag in ['header', 'footer']:
+                    section = soup.find(tag)
+                    if section:
+                        section_text = section.get_text(separator=" ", strip=True)
+                        raw_numbers = re.findall(r'(\+?\d[\d\s\-\(\)]{7,}\d)', section_text)
+                        cleaned = [n.strip() for n in raw_numbers if is_valid_phone(n)]
+                        phone_numbers.update(cleaned)
 
-            return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
-    except Exception as e:
-        return "Error", "Error"
+                return ", ".join(set(emails)), ", ".join(sorted(phone_numbers))
+        except Exception as e:
+            attempt += 1
+            if attempt == retries:
+                return "Error", "Error"
+            else:
+                time.sleep(2)  # Small delay before retrying
 
 # ✅ Async Scraping with Max Speed
 async def scrape_contacts(urls):
