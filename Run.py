@@ -103,7 +103,7 @@ if uploaded_file:
             results = []
             futures = []
 
-            with ThreadPoolExecutor(max_workers=50) as executor:
+            with ThreadPoolExecutor(max_workers=70) as executor:
                 futures = {executor.submit(extract_contacts, domain): domain for domain in active_df[domain_col]}
 
                 for i, future in enumerate(as_completed(futures)):
