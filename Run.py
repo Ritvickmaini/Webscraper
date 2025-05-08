@@ -66,7 +66,7 @@ if uploaded_file:
 
         # Using ThreadPoolExecutor to check website statuses concurrently
         with ThreadPoolExecutor(max_workers=70) as executor:
-            futures = {executor.submit(is_website_active, domain): domain for domain in df[domain_col]}
+            futures = {executor.submit(is_website_active, domain): domain for domain in df[domain_col]]
             for i, future in enumerate(as_completed(futures)):
                 try:
                     result = future.result()
@@ -116,19 +116,31 @@ if uploaded_file:
                 results.append(result)
                 scraping_bar.progress((i + 1) / len(futures))
 
-        # Insert results immediately after domain column
+        # Insert results immediately after domain column or at the end if domain column is not found
+        if domain_col is not None:
+            insert_at = df.columns.get_loc(domain_col) + 1
+        else:
+            insert_at = len(df.columns)
+
+        # Adding Emails and Phones columns
         emails = [r["Emails"] for r in results]
         phones = [r["Phones"] for r in results]
-        insert_at = df.columns.get_loc(domain_col) + 1
+
         df.insert(insert_at, "Emails", emails)
         df.insert(insert_at + 1, "Phone Numbers", phones)
+
+        # Adding Website Status column after domain column if it exists
+        if domain_col is not None:
+            df.insert(insert_at + 2, "Website Status", active_status)
+        else:
+            df["Website Status"] = active_status  # Inserting at the end if no domain column is present
 
         end_time = time.time()  # End time tracking
         elapsed_time = end_time - start_time  # Calculate elapsed time
         st.write(f"⏱️ Total Time Taken: {elapsed_time:.2f} seconds")
 
         st.subheader("📥 Final Results (Active and Inactive Websites)")
-        st.dataframe(df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
+        st.dataframe(df)
 
-        # Download final CSV with active and inactive websites
-        st.download_button("⬇️ Download Results (Active and Inactive Websites)", df.to_csv(index=False), file_name="b2b_contact_scraper_results.csv")
+        # Download final CSV with the updated columns
+        st.download_button("⬇️ Download Full Results", df.to_csv(index=False), file_name="b2b_contact_scraper_results.csv")
