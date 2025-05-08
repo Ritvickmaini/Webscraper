@@ -129,11 +129,13 @@ if uploaded_file:
         df.insert(insert_at, "Emails", emails)
         df.insert(insert_at + 1, "Phone Numbers", phones)
 
-        # Adding Website Status column after domain column if it exists
-        if domain_col is not None:
-            df.insert(insert_at + 2, "Website Status", active_status)
+        # Check if 'Website Status' column exists
+        if "Website Status" in df.columns:
+            # If it exists, just update it
+            df["Website Status"] = active_status
         else:
-            df["Website Status"] = active_status  # Inserting at the end if no domain column is present
+            # If it doesn't exist, insert it
+            df.insert(insert_at + 2, "Website Status", active_status)
 
         end_time = time.time()  # End time tracking
         elapsed_time = end_time - start_time  # Calculate elapsed time
