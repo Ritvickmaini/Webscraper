@@ -5,6 +5,7 @@ from bs4 import BeautifulSoup
 import re
 import validators
 from concurrent.futures import ThreadPoolExecutor, as_completed
+import time
 
 # App config
 st.set_page_config(page_title="B2B Contact Scraper", layout="wide")
@@ -22,7 +23,7 @@ st.markdown("""
 
 # Title
 st.title("📬 B2B Contact Scraper")
-st.write("Upload a CSV with a `company_domain` column. This tool checks which websites are active, then extracts emails and UK phone numbers from active ones.")
+st.write("Upload a CSV with a `company_domain` column. This tool checks which websites are active, then extracts emails and UK phone numbers from both active and inactive websites.")
 
 # Upload CSV
 uploaded_file = st.file_uploader("📁 Upload CSV", type=["csv"])
@@ -61,20 +62,25 @@ if uploaded_file:
         active_status = []
         status_bar = st.progress(0)
 
-        for i, domain in enumerate(df[domain_col]):
-            if not is_valid_domain(domain):
-                active_status.append("Invalid or Social")
-            else:
-                active_status.append("Active" if is_website_active(domain) else "Inactive")
-            status_bar.progress((i + 1) / len(df))
+        start_time = time.time()  # Start time tracking
+
+        # Using ThreadPoolExecutor to check website statuses concurrently
+        with ThreadPoolExecutor(max_workers=70) as executor:
+            futures = {executor.submit(is_website_active, domain): domain for domain in df[domain_col]}
+            for i, future in enumerate(as_completed(futures)):
+                try:
+                    result = future.result()
+                    active_status.append("Active" if result else "Inactive")
+                except:
+                    active_status.append("Inactive")
+                status_bar.progress((i + 1) / len(df))
 
         df["Website Status"] = active_status
-        active_df = df[df["Website Status"] == "Active"].copy()
 
         st.subheader("📊 Summary")
         st.write(f"Total entries: {len(df)}")
-        st.write(f"✅ Active websites: {len(active_df)}")
-        st.write(f"❌ Inactive/invalid/social: {len(df) - len(active_df)}")
+        st.write(f"✅ Active websites: {len(df[df['Website Status'] == 'Active'])}")
+        st.write(f"❌ Inactive/invalid/social: {len(df[df['Website Status'] != 'Active'])}")
 
         def extract_contacts(domain):
             emails = set()
@@ -96,51 +102,33 @@ if uploaded_file:
             return {"Emails": ", ".join(emails), "Phones": ", ".join(phones)}
 
         # Auto-start scraping right after status check
-        if not active_df.empty:
-            st.subheader("🔄 Scraping Contacts...")
-            scraping_bar = st.progress(0)
-            results = []
+        st.subheader("🔄 Scraping Contacts...")
+        scraping_bar = st.progress(0)
+        results = []
 
-            with ThreadPoolExecutor(max_workers=70) as executor:
-                futures = {executor.submit(extract_contacts, domain): domain for domain in active_df[domain_col]}
-                for i, future in enumerate(as_completed(futures)):
-                    try:
-                        result = future.result()
-                    except:
-                        result = {"Emails": "", "Phones": ""}
-                    results.append(result)
-                    scraping_bar.progress((i + 1) / len(futures))
+        with ThreadPoolExecutor(max_workers=70) as executor:
+            futures = {executor.submit(extract_contacts, domain): domain for domain in df[domain_col]}
+            for i, future in enumerate(as_completed(futures)):
+                try:
+                    result = future.result()
+                except:
+                    result = {"Emails": "", "Phones": ""}
+                results.append(result)
+                scraping_bar.progress((i + 1) / len(futures))
 
-            # Insert results immediately after domain column
-            emails = [r["Emails"] for r in results]
-            phones = [r["Phones"] for r in results]
-            insert_at = active_df.columns.get_loc(domain_col) + 1
-            active_df.insert(insert_at, "Emails", emails)
-            active_df.insert(insert_at + 1, "Phone Numbers", phones)
+        # Insert results immediately after domain column
+        emails = [r["Emails"] for r in results]
+        phones = [r["Phones"] for r in results]
+        insert_at = df.columns.get_loc(domain_col) + 1
+        df.insert(insert_at, "Emails", emails)
+        df.insert(insert_at + 1, "Phone Numbers", phones)
 
-            st.subheader("📥 Filtered Results (Active Websites Only)")
-            st.dataframe(active_df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
+        end_time = time.time()  # End time tracking
+        elapsed_time = end_time - start_time  # Calculate elapsed time
+        st.write(f"⏱️ Total Time Taken: {elapsed_time:.2f} seconds")
 
-            # ✅ FIX: Deduplicate before merging
-            dedup_active_data = active_df[[domain_col, "Emails", "Phone Numbers"]].drop_duplicates(subset=domain_col)
+        st.subheader("📥 Final Results (Active and Inactive Websites)")
+        st.dataframe(df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
 
-            # Merge with full dataframe
-            final_df = df.merge(
-                dedup_active_data,
-                on=domain_col,
-                how="left"
-            )
-
-            # Reorder merged columns
-            insert_at = final_df.columns.get_loc(domain_col) + 1
-            emails_col = final_df.pop("Emails")
-            phones_col = final_df.pop("Phone Numbers")
-            final_df.insert(insert_at, "Emails", emails_col)
-            final_df.insert(insert_at + 1, "Phone Numbers", phones_col)
-
-            st.subheader("📄 Final Results (Full CSV with Added Data)")
-            st.dataframe(final_df.head(20))
-
-            # Download buttons for two CSVs:
-            st.download_button("⬇️ Download Filtered Results (Active Websites Only)", active_df.to_csv(index=False), file_name="filtered_results.csv")
-            st.download_button("⬇️ Download Full Results (With Emails and Phone Numbers)", final_df.to_csv(index=False), file_name="full_results.csv")
+        # Download final CSV with active and inactive websites
+        st.download_button("⬇️ Download Results (Active and Inactive Websites)", df.to_csv(index=False), file_name="b2b_contact_scraper_results.csv")
