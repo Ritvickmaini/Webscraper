@@ -96,13 +96,14 @@ if uploaded_file:
                 pass
             return {"Emails": ", ".join(emails), "Phones": ", ".join(phones)}
 
-        if st.button("🚀 Start Scraping Contacts from Active Websites"):
+        # Auto-start scraping right after status check
+        if not active_df.empty:
             st.subheader("🔄 Scraping Contacts...")
             scraping_bar = st.progress(0)
             results = []
             futures = []
 
-            with ThreadPoolExecutor(max_workers=70) as executor:
+            with ThreadPoolExecutor(max_workers=50) as executor:
                 futures = {executor.submit(extract_contacts, domain): domain for domain in active_df[domain_col]}
 
                 for i, future in enumerate(as_completed(futures)):
@@ -113,7 +114,7 @@ if uploaded_file:
                     results.append(result)
                     scraping_bar.progress((i + 1) / len(futures))
 
-            # Insert columns right after domain_col
+            # Insert results immediately after domain column
             emails = [r["Emails"] for r in results]
             phones = [r["Phones"] for r in results]
             insert_at = active_df.columns.get_loc(domain_col) + 1
@@ -123,14 +124,14 @@ if uploaded_file:
             st.subheader("📥 Filtered Results (Active Websites Only)")
             st.dataframe(active_df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
 
-            # Merge with full df
+            # Merge with full dataframe
             final_df = df.merge(
                 active_df[[domain_col, "Emails", "Phone Numbers"]],
                 on=domain_col,
                 how="left"
             )
 
-            # Move new columns after domain_col
+            # Reorder merged columns
             insert_at = final_df.columns.get_loc(domain_col) + 1
             emails_col = final_df.pop("Emails")
             phones_col = final_df.pop("Phone Numbers")
@@ -140,5 +141,6 @@ if uploaded_file:
             st.subheader("📄 Final Results (Full CSV with Added Data)")
             st.dataframe(final_df.head(20))
 
+            # Download buttons
             st.download_button("⬇️ Download Filtered Results", active_df.to_csv(index=False), file_name="filtered_results.csv")
             st.download_button("⬇️ Download Full Results", final_df.to_csv(index=False), file_name="full_results.csv")
