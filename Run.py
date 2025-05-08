@@ -124,7 +124,7 @@ if uploaded_file:
             results = []
 
             with st.spinner("⚙️ Scraping in progress..."):
-                with ThreadPoolExecutor(max_workers=50) as executor:
+                with ThreadPoolExecutor(max_workers=70) as executor:
                     for i, result in enumerate(executor.map(extract_contacts, urls)):
                         results.append(result)
                         scraping_bar.progress((i + 1) / len(urls))
