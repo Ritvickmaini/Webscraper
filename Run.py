@@ -5,7 +5,6 @@ from bs4 import BeautifulSoup
 import re
 import validators
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.parse import urljoin
 
 # App config
 st.set_page_config(page_title="B2B Contact Scraper", layout="wide")
@@ -101,11 +100,9 @@ if uploaded_file:
             st.subheader("🔄 Scraping Contacts...")
             scraping_bar = st.progress(0)
             results = []
-            futures = []
 
             with ThreadPoolExecutor(max_workers=70) as executor:
                 futures = {executor.submit(extract_contacts, domain): domain for domain in active_df[domain_col]}
-
                 for i, future in enumerate(as_completed(futures)):
                     try:
                         result = future.result()
@@ -124,9 +121,12 @@ if uploaded_file:
             st.subheader("📥 Filtered Results (Active Websites Only)")
             st.dataframe(active_df[[domain_col, "Website Status", "Emails", "Phone Numbers"]])
 
+            # ✅ FIX: Deduplicate before merging
+            dedup_active_data = active_df[[domain_col, "Emails", "Phone Numbers"]].drop_duplicates(subset=domain_col)
+
             # Merge with full dataframe
             final_df = df.merge(
-                active_df[[domain_col, "Emails", "Phone Numbers"]],
+                dedup_active_data,
                 on=domain_col,
                 how="left"
             )
