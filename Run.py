@@ -66,7 +66,7 @@ if uploaded_file:
 
         # Using ThreadPoolExecutor to check website statuses concurrently
         with ThreadPoolExecutor(max_workers=70) as executor:
-            futures = {executor.submit(is_website_active, domain): domain for domain in df[domain_col]]
+            futures = {executor.submit(is_website_active, domain): domain for domain in df[domain_col]}
             for i, future in enumerate(as_completed(futures)):
                 try:
                     result = future.result()
